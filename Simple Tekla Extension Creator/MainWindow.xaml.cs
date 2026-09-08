@@ -7,10 +7,47 @@ namespace Simple_Tekla_Extension_Creator
 {
     public partial class MainWindow : Window
     {
-        public MainWindow()
+        public MainWindow(string? startupTeklaVersion = null, string? startupUi = null)
         {
             InitializeComponent();
+            ApplyStartupSelections(startupTeklaVersion, startupUi);
             UpdatePath();
+        }
+
+        private void ApplyStartupSelections(string? startupTeklaVersion, string? startupUi)
+        {
+            if (!string.IsNullOrWhiteSpace(startupUi))
+            {
+                TrySelectComboItem(cmbAppType, startupUi);
+            }
+
+            if (!string.IsNullOrWhiteSpace(startupTeklaVersion))
+            {
+                string normalizedVersion = NormalizeTeklaVersion(startupTeklaVersion);
+                TrySelectComboItem(cmbTeklaVersion, normalizedVersion);
+            }
+        }
+
+        private static string NormalizeTeklaVersion(string version)
+        {
+            return version.Trim().Equals("2027", StringComparison.OrdinalIgnoreCase)
+                ? "2027 dailybuild"
+                : version.Trim();
+        }
+
+        private static bool TrySelectComboItem(ComboBox comboBox, string value)
+        {
+            foreach (ComboBoxItem item in comboBox.Items)
+            {
+                string? content = item.Content?.ToString();
+                if (string.Equals(content, value, StringComparison.OrdinalIgnoreCase))
+                {
+                    comboBox.SelectedItem = item;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private string GetSelectedText(ComboBox comboBox)
@@ -481,12 +518,46 @@ namespace {safeNamespace}
             File.WriteAllText(Path.Combine(projectPath, $"{className}.xaml.cs"), mainWindowXamlCs);
         }
 
-        private void BtnCreate_Click(object sender, RoutedEventArgs e)
+        public bool TryCreateProjectNonInteractive(string projectName, string appType, string teklaVersion, out string message)
+        {
+            message = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(projectName))
+            {
+                message = "Please provide a project name with --project.";
+                return false;
+            }
+
+            txtProjectName.Text = projectName.Trim();
+
+            if (!TrySelectComboItem(cmbAppType, appType))
+            {
+                message = $"Unsupported UI '{appType}'. Allowed values: Console, WinForms, WPF.";
+                return false;
+            }
+
+            string normalizedVersion = NormalizeTeklaVersion(teklaVersion);
+            if (!TrySelectComboItem(cmbTeklaVersion, normalizedVersion))
+            {
+                message = $"Unsupported version '{teklaVersion}'. Allowed values: 2023, 2024, 2025, 2026, 2027.";
+                return false;
+            }
+
+            UpdatePath();
+            return TryCreateProject(openProjectInVisualStudio: false, showMessageBoxes: false, out message);
+        }
+
+        private bool TryCreateProject(bool openProjectInVisualStudio, bool showMessageBoxes, out string message)
         {
             if (!ValidateInputs(out string error))
             {
-                MessageBox.Show(error, "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
+                message = error;
+                if (showMessageBoxes)
+                {
+                    MessageBox.Show(error, "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+
+                return false;
             }
 
             string projectName = txtProjectName.Text.Trim();
@@ -499,11 +570,9 @@ namespace {safeNamespace}
             {
                 Directory.CreateDirectory(projectPath);
 
-                // Write .csproj
                 string csprojContent = GenerateCsproj(appType, teklaVersion);
                 File.WriteAllText(Path.Combine(projectPath, $"{projectName}.csproj"), csprojContent);
 
-                // Write source files
                 if (appType == "WPF")
                 {
                     GenerateWpfFiles(projectPath, safeNamespace, projectName);
@@ -519,35 +588,57 @@ namespace {safeNamespace}
                     }
                 }
 
+                string successMessage = $"Project created successfully at: {projectPath}";
                 txtStatus.Foreground = System.Windows.Media.Brushes.Green;
-                txtStatus.Text = $"Project created successfully at: {projectPath}";
+                txtStatus.Text = successMessage;
 
-                // Open the .csproj file with Visual Studio Insiders
-                string csprojFile = Path.Combine(projectPath, $"{projectName}.csproj");
-                string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-                string[] candidatePaths =
-                [
-                    Path.Combine(programFiles, @"Microsoft Visual Studio\Insiders\Common7\IDE\devenv.exe"),
-                    Path.Combine(programFiles, @"Microsoft Visual Studio\2022\Preview\Common7\IDE\devenv.exe"),
-                ];
-                string? devenvPath = candidatePaths.FirstOrDefault(File.Exists);
-                if (devenvPath != null)
+                if (openProjectInVisualStudio)
                 {
-                    Process.Start(devenvPath, $"\"{csprojFile}\"");
+                    string csprojFile = Path.Combine(projectPath, $"{projectName}.csproj");
+                    OpenCreatedProject(csprojFile);
                 }
-                else
-                {
-                    // Fallback: open with default associated program
-                    Process.Start(new ProcessStartInfo(csprojFile) { UseShellExecute = true });
-                }
+
+                message = successMessage;
+                return true;
             }
             catch (Exception ex)
             {
                 txtStatus.Foreground = System.Windows.Media.Brushes.OrangeRed;
                 txtStatus.Text = $"Error: {ex.Message}";
-                MessageBox.Show($"Failed to create project: {ex.Message}",
-                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                message = $"Failed to create project: {ex.Message}";
+
+                if (showMessageBoxes)
+                {
+                    MessageBox.Show(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+
+                return false;
             }
+        }
+
+        private static void OpenCreatedProject(string csprojFile)
+        {
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string[] candidatePaths =
+            [
+                Path.Combine(programFiles, @"Microsoft Visual Studio\Insiders\Common7\IDE\devenv.exe"),
+                Path.Combine(programFiles, @"Microsoft Visual Studio\2022\Preview\Common7\IDE\devenv.exe"),
+            ];
+
+            string? devenvPath = candidatePaths.FirstOrDefault(File.Exists);
+            if (devenvPath != null)
+            {
+                Process.Start(devenvPath, $"\"{csprojFile}\"");
+            }
+            else
+            {
+                Process.Start(new ProcessStartInfo(csprojFile) { UseShellExecute = true });
+            }
+        }
+
+        private void BtnCreate_Click(object sender, RoutedEventArgs e)
+        {
+            TryCreateProject(openProjectInVisualStudio: true, showMessageBoxes: true, out _);
         }
     }
 }

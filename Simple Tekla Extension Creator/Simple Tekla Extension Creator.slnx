@@ -1,3 +1,4 @@
-<Solution>
+﻿<Solution>
   <Project Path="Simple Tekla Extension Creator.csproj" />
+  <Project Path="Copilot Skill\Copilot Skill.csproj" />
 </Solution>
