@@ -16,12 +16,26 @@ param(
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($CreatorProjectPath)) {
-	$solutionDir = Split-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -Parent
-	$CreatorProjectPath = Join-Path $solutionDir "Simple Tekla Extension Creator.csproj"
+	# 1. Explicit -CreatorProjectPath (already handled above by the parameter itself)
+	# 2. SIMPLE_TEKLA_CREATOR_PATH environment variable (points to the .csproj or its folder)
+	# 3. Fallback: assume this script still lives inside the Simple Tekla Extension Creator repo
+	$envPath = $env:SIMPLE_TEKLA_CREATOR_PATH
+	if (-not [string]::IsNullOrWhiteSpace($envPath)) {
+		if ((Test-Path -Path $envPath -PathType Container)) {
+			$CreatorProjectPath = Join-Path $envPath "Simple Tekla Extension Creator.csproj"
+		}
+		else {
+			$CreatorProjectPath = $envPath
+		}
+	}
+	else {
+		$solutionDir = Split-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -Parent
+		$CreatorProjectPath = Join-Path $solutionDir "Simple Tekla Extension Creator.csproj"
+	}
 }
 
 if (-not (Test-Path -Path $CreatorProjectPath)) {
-	throw "Creator project file not found: $CreatorProjectPath"
+	throw "Creator project file not found: $CreatorProjectPath. Pass -CreatorProjectPath explicitly, or set the SIMPLE_TEKLA_CREATOR_PATH environment variable to the csproj file (or its folder)."
 }
 
 $arguments = @(
