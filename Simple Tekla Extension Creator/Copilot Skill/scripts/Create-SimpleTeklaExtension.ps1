@@ -10,6 +10,8 @@ param(
 
 	[switch]$OpenProject = $true,
 
+	[string]$MacroFile,
+
 	[string]$CreatorProjectPath
 )
 
@@ -50,6 +52,14 @@ $arguments = @(
 
 if ($OpenProject) {
 	$arguments += "--open"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($MacroFile)) {
+	if (-not (Test-Path -Path $MacroFile)) {
+		throw "Macro file not found: $MacroFile"
+	}
+
+	$arguments += "--macro", $MacroFile
 }
 
 & dotnet @arguments

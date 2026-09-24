@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Simple_Tekla_Extension_Creator"
         mc:Ignorable="d"
-        Title="Simple Tekla Extension Creator" Height="460" Width="580"
+        Title="Simple Tekla Extension Creator" Height="510" Width="580"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         Background="#1E1E2E" Icon="app.png">
 
@@ -107,6 +107,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
@@ -165,13 +166,31 @@
                            FontSize="12" FontFamily="Cascadia Code,Consolas,Segoe UI"/>
             </Border>
 
+            <!-- Custom Open API Code (macro) -->
+            <TextBlock Text="Open API Code" Style="{StaticResource LabelStyle}"
+                       Grid.Row="6" Grid.Column="0" Margin="0,0,0,14"/>
+            <Grid Grid.Row="6" Grid.Column="1" Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="#252540" CornerRadius="6"
+                        Padding="8,6" Margin="0,0,8,0">
+                    <TextBlock x:Name="txtMacroPath" Text="Default (insert beam)" TextWrapping="Wrap"
+                               Foreground="{StaticResource FgSecondary}" FontSize="12"
+                               FontFamily="Cascadia Code,Consolas,Segoe UI"/>
+                </Border>
+                <Button Grid.Column="1" x:Name="btnSelectMacro" Content="Select Macro..."
+                        Padding="10,6" Click="BtnSelectMacro_Click"/>
+            </Grid>
+
             <!-- Status -->
-            <TextBlock x:Name="txtStatus" Grid.Row="6" Grid.ColumnSpan="2" Margin="0,0,0,14"
+            <TextBlock x:Name="txtStatus" Grid.Row="7" Grid.ColumnSpan="2" Margin="0,0,0,14"
                        TextWrapping="Wrap" Foreground="{StaticResource AccentRed}" FontSize="12"
                        FontFamily="Segoe UI"/>
 
             <!-- Create Button -->
-            <Button x:Name="btnCreate" Grid.Row="8" Grid.ColumnSpan="2"
+            <Button x:Name="btnCreate" Grid.Row="9" Grid.ColumnSpan="2"
                     Height="42" Click="BtnCreate_Click">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE948;" FontFamily="Segoe MDL2 Assets" FontSize="16"

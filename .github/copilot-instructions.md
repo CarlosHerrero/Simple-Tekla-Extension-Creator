@@ -11,8 +11,16 @@ the app's UI.
 
 Use this skill whenever the user asks to create/scaffold a new Tekla extension, sample, or
 starter project. Read `SKILL.md` first for the full list of parameters (`ProjectName`,
-`Version`, `UI`, `OpenProject`, `CreatorProjectPath`) and expected behavior before invoking
-the script.
+`Version`, `UI`, `OpenProject`, `MacroFile`, `CreatorProjectPath`) and expected behavior before
+invoking the script.
+
+The generated project always checks the Tekla model name. By default it also inserts an
+example beam, but you can replace that example with real Tekla Open API code by passing
+`-MacroFile <path-to-macro.cs>` pointing to an existing Tekla macro file (e.g. from
+`C:\ProgramData\Trimble\Tekla Structures\<version>.0\Environments\common\macros`). The code
+inside the macro's entry-point method (and any helper classes/methods it declares) is copied
+into a separate `OpenApiCode.cs` file in the generated project, exposed via a static
+`OpenApiCode.ExecuteTextCode()` method that the project calls instead of the beam example.
 
 ### Prerequisites to run the skill
 - Windows (paths and Tekla Structures installation locations are Windows-specific)

@@ -1,7 +1,9 @@
 ﻿using System.Diagnostics;
 using System.IO;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using Microsoft.Win32;
 
 namespace Simple_Tekla_Extension_Creator
 {
@@ -9,6 +11,13 @@ namespace Simple_Tekla_Extension_Creator
     {
         private bool _bootstrapFailed;
         private string _bootstrapError = string.Empty;
+
+        private string? _macroFilePath;
+        private string? _macroBody;
+        private string _macroExtraCode = string.Empty;
+        private List<string> _macroUsings = [];
+
+        private bool HasCustomMacro => !string.IsNullOrEmpty(_macroBody);
 
         public MainWindow(string? startupTeklaVersion = null, string? startupUi = null, bool interactive = true)
         {
@@ -171,6 +180,281 @@ namespace Simple_Tekla_Extension_Creator
             if (string.IsNullOrEmpty(projectName))
                 return string.Empty;
             return Path.Combine(GetReposBasePath(), projectName);
+        }
+
+        private string GetMacrosDefaultFolder()
+        {
+            string teklaVersion = GetTeklaVersionFolder();
+            string versionFolder = teklaVersion == "2027 dailybuild" ? "2027.0 Daily" : $"{teklaVersion}.0";
+            return $@"C:\ProgramData\Trimble\Tekla Structures\{versionFolder}\Environments\common\macros\modeling";
+        }
+
+        private void BtnSelectMacro_Click(object sender, RoutedEventArgs e)
+        {
+            string defaultFolder = GetMacrosDefaultFolder();
+
+            var dialog = new OpenFileDialog
+            {
+                Title = "Select a Tekla Open API macro file",
+                Filter = "C# macro files (*.cs)|*.cs|All files (*.*)|*.*",
+                InitialDirectory = Directory.Exists(defaultFolder)
+                    ? defaultFolder
+                    : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            if (!TryLoadMacroFile(dialog.FileName, out string error))
+            {
+                MessageBox.Show(error, "Invalid Macro File", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            _macroFilePath = dialog.FileName;
+            txtMacroPath.Text = Path.GetFileName(dialog.FileName);
+            txtStatus.Foreground = System.Windows.Media.Brushes.Green;
+            txtStatus.Text = $"Using custom Open API code from '{Path.GetFileName(dialog.FileName)}'.";
+        }
+
+        private bool TryLoadMacroFile(string filePath, out string error)
+        {
+            error = string.Empty;
+
+            if (!File.Exists(filePath))
+            {
+                error = $"Macro file not found: '{filePath}'.";
+                return false;
+            }
+
+            try
+            {
+                (List<string> usings, string body, string extraCode) = ExtractMacroRunBody(filePath);
+                _macroUsings = usings;
+                _macroBody = body;
+                _macroExtraCode = extraCode;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = $"Could not read Open API code from '{filePath}': {ex.Message}";
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Reads a Tekla macro (.cs) file and extracts the code found inside its 'Run' method body,
+        /// along with any 'using' directives declared at the top of the file, and any additional
+        /// helper methods/classes declared in the file outside of the wrapper 'Script' class that
+        /// only contains 'Run'/'Main'. The surrounding namespace/class/method declarations
+        /// (UserScript, Script, Run) themselves are not part of the result.
+        /// </summary>
+        private static (List<string> Usings, string Body, string ExtraCode) ExtractMacroRunBody(string filePath)
+        {
+            string content = File.ReadAllText(filePath);
+
+            List<string> usings = Regex.Matches(content, @"(?m)^\s*using\s+[^;]+;")
+                .Select(m => m.Value.Trim())
+                .Distinct()
+                .ToList();
+
+            int runIndex = content.IndexOf("void Run(", StringComparison.Ordinal);
+            if (runIndex < 0)
+            {
+                throw new InvalidOperationException("Could not find a 'Run' method in the selected file.");
+            }
+
+            int parenClose = content.IndexOf(')', runIndex);
+            if (parenClose < 0)
+            {
+                throw new InvalidOperationException("Malformed 'Run' method signature.");
+            }
+
+            int braceOpen = content.IndexOf('{', parenClose);
+            if (braceOpen < 0)
+            {
+                throw new InvalidOperationException("Could not find the body of the 'Run' method.");
+            }
+
+            int braceClose = FindMatchingBrace(content, braceOpen);
+            if (braceClose < 0)
+            {
+                throw new InvalidOperationException("Could not find the end of the 'Run' method body.");
+            }
+
+            string rawBody = content[(braceOpen + 1)..braceClose];
+            string body = NormalizeIndent(rawBody);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                throw new InvalidOperationException("The 'Run' method body is empty.");
+            }
+
+            string extraCode = ExtractExtraTypes(content, runIndex);
+
+            return (usings, body, extraCode);
+        }
+
+        /// <summary>
+        /// Finds and returns the source of every top-level class/struct declared in the macro file,
+        /// except the wrapper class that contains the macro's 'Run' entry point (e.g. 'Script' in
+        /// classic UserScript macros, or 'Macro' in newer Tekla.Macros.Runtime-based macros). These
+        /// extra types (e.g. helper classes such as 'SwapHandles' in the Tekla sample macros) are
+        /// copied verbatim into the generated Open API logic file.
+        /// </summary>
+        private static string ExtractExtraTypes(string content, int runIndex)
+        {
+            var extraTypes = new List<string>();
+            foreach (Match match in Regex.Matches(content, @"(?m)^\s*(?:public|internal|private|protected)?\s*(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(class|struct)\s+(\w+)"))
+            {
+                int braceOpen = content.IndexOf('{', match.Index);
+                if (braceOpen < 0)
+                {
+                    continue;
+                }
+
+                int braceClose = FindMatchingBrace(content, braceOpen);
+                if (braceClose < 0)
+                {
+                    continue;
+                }
+
+                // Skip the wrapper class/type that contains the 'Run' entry point itself; its body
+                // was already extracted separately as the ExecuteTextCode content.
+                if (runIndex >= braceOpen && runIndex <= braceClose)
+                {
+                    continue;
+                }
+
+                string declaration = content[match.Index..(braceClose + 1)].TrimEnd();
+                extraTypes.Add(declaration);
+            }
+
+            return string.Join("\r\n\r\n", extraTypes);
+        }
+
+        private static int FindMatchingBrace(string content, int braceOpen)
+        {
+            int depth = 0;
+            for (int i = braceOpen; i < content.Length; i++)
+            {
+                if (content[i] == '{')
+                {
+                    depth++;
+                }
+                else if (content[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            return -1;
+        }
+
+        private static string NormalizeIndent(string rawBody)
+        {
+            List<string> lines = rawBody.Replace("\r\n", "\n").Split('\n').ToList();
+            while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[0]))
+            {
+                lines.RemoveAt(0);
+            }
+            while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
+            {
+                lines.RemoveAt(lines.Count - 1);
+            }
+
+            if (lines.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            int minIndent = lines
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Select(l => l.Length - l.TrimStart(' ', '\t').Length)
+                .DefaultIfEmpty(0)
+                .Min();
+
+            return string.Join("\r\n", lines.Select(l => l.Length >= minIndent ? l[minIndent..] : l.TrimStart()));
+        }
+
+        private static string IndentCode(string code, int spaces)
+        {
+            string indent = new(' ', spaces);
+            return string.Join("\r\n", code.Replace("\r\n", "\n").Split('\n')
+                .Select(l => string.IsNullOrWhiteSpace(l) ? string.Empty : indent + l));
+        }
+
+        private string GetDefaultActionBody(string appType)
+        {
+            const string beamSetup =
+                "var beam = new Beam();\r\n" +
+                "beam.Name = \"BEAM\";\r\n" +
+                "beam.Profile.ProfileString = \"HEA300\";\r\n" +
+                "beam.Material.MaterialString = \"S235JR\";\r\n" +
+                "beam.Class = \"1\";\r\n" +
+                "beam.StartPoint = new Tekla.Structures.Geometry3d.Point(0, 0, 0);\r\n" +
+                "beam.EndPoint = new Tekla.Structures.Geometry3d.Point(6000, 0, 0);";
+
+            return appType switch
+            {
+                "Console" => beamSetup + "\r\nbeam.Insert();\r\n\r\nmodel.CommitChanges();\r\nConsole.WriteLine(\"Beam inserted successfully.\");",
+                "WinForms" => beamSetup + "\r\n\r\nif (beam.Insert())\r\n{\r\n    _model.CommitChanges();\r\n    lblStatus.ForeColor = System.Drawing.Color.Green;\r\n    lblStatus.Text = \"Beam inserted successfully.\";\r\n}\r\nelse\r\n{\r\n    lblStatus.ForeColor = System.Drawing.Color.Red;\r\n    lblStatus.Text = \"Failed to insert beam.\";\r\n}",
+                _ => beamSetup + "\r\n\r\nif (beam.Insert())\r\n{\r\n    _model.CommitChanges();\r\n    txtStatus.Foreground = Brushes.Green;\r\n    txtStatus.Text = \"Beam inserted successfully.\";\r\n}\r\nelse\r\n{\r\n    txtStatus.Foreground = Brushes.Red;\r\n    txtStatus.Text = \"Failed to insert beam.\";\r\n}"
+            };
+        }
+
+        private string GetActionBody(string appType)
+        {
+            if (!HasCustomMacro)
+            {
+                return GetDefaultActionBody(appType);
+            }
+
+            string successAssignment = appType switch
+            {
+                "Console" => "Console.WriteLine(\"Code executed successfully.\");",
+                "WinForms" => "lblStatus.ForeColor = System.Drawing.Color.Green;\r\nlblStatus.Text = \"Code executed successfully.\";",
+                _ => "txtStatus.Foreground = Brushes.Green;\r\ntxtStatus.Text = \"Code executed successfully.\";"
+            };
+
+            return "OpenApiCode.ExecuteTextCode();\r\n\r\n" + successAssignment;
+        }
+
+        /// <summary>
+        /// Builds the content of the separate "OpenApiCode.cs" file that hosts the Tekla Open API
+        /// logic copied from the selected macro's 'Run' method (exposed as 'ExecuteTextCode'), plus
+        /// any additional helper classes/methods declared in the macro file.
+        /// </summary>
+        private string GenerateOpenApiCodeFile(string safeNamespace)
+        {
+            List<string> baseUsings = ["using System;", "using Tekla.Structures.Model;"];
+            List<string> allUsings = baseUsings
+                .Concat(_macroUsings)
+                .Distinct()
+                .ToList();
+            string usings = string.Join("\r\n", allUsings);
+
+            string extraTypesBlock = string.IsNullOrWhiteSpace(_macroExtraCode)
+                ? string.Empty
+                : "\r\n\r\n" + IndentCode(_macroExtraCode, 4);
+
+            return $@"{usings}
+namespace {safeNamespace}
+{{
+    public static class OpenApiCode
+    {{
+        public static void ExecuteTextCode()
+        {{
+            {IndentCode(_macroBody ?? string.Empty, 12).TrimStart()}
+        }}
+    }}{extraTypesBlock}
+}}
+";
         }
 
         private void UpdatePath()
@@ -370,17 +654,7 @@ namespace {safeNamespace}
 
             Console.WriteLine(""Model name: "" + model.GetInfo().ModelName);
 
-            var beam = new Beam();
-            beam.Name = ""BEAM"";
-            beam.Profile.ProfileString = ""HEA300"";
-            beam.Material.MaterialString = ""S235JR"";
-            beam.Class = ""1"";
-            beam.StartPoint = new Tekla.Structures.Geometry3d.Point(0, 0, 0);
-            beam.EndPoint = new Tekla.Structures.Geometry3d.Point(6000, 0, 0);
-            beam.Insert();
-
-            model.CommitChanges();
-            Console.WriteLine(""Beam inserted successfully."");
+            {IndentCode(GetActionBody("Console"), 12).TrimStart()}
         }}
     }}
 }}
@@ -443,25 +717,7 @@ namespace {safeNamespace}
         {{
             try
             {{
-                var beam = new Beam();
-                beam.Name = ""BEAM"";
-                beam.Profile.ProfileString = ""HEA300"";
-                beam.Material.MaterialString = ""S235JR"";
-                beam.Class = ""1"";
-                beam.StartPoint = new Tekla.Structures.Geometry3d.Point(0, 0, 0);
-                beam.EndPoint = new Tekla.Structures.Geometry3d.Point(6000, 0, 0);
-
-                if (beam.Insert())
-                {{
-                    _model.CommitChanges();
-                    lblStatus.ForeColor = System.Drawing.Color.Green;
-                    lblStatus.Text = ""Beam inserted successfully."";
-                }}
-                else
-                {{
-                    lblStatus.ForeColor = System.Drawing.Color.Red;
-                    lblStatus.Text = ""Failed to insert beam."";
-                }}
+                {IndentCode(GetActionBody("WinForms"), 16).TrimStart()}
             }}
             catch (Exception ex)
             {{
@@ -503,7 +759,7 @@ namespace {safeNamespace}
             this.btnInsertBeam.Location = new System.Drawing.Point(12, 40);
             this.btnInsertBeam.Name = ""btnInsertBeam"";
             this.btnInsertBeam.Size = new System.Drawing.Size(150, 30);
-            this.btnInsertBeam.Text = ""Insert Beam"";
+            this.btnInsertBeam.Text = ""{(HasCustomMacro ? "Run Code" : "Insert Beam")}"";
             this.btnInsertBeam.UseVisualStyleBackColor = true;
             this.btnInsertBeam.Click += new System.EventHandler(this.btnInsertBeam_Click);
             this.lblStatus.AutoSize = true;
@@ -553,7 +809,7 @@ namespace {safeNamespace}
         Title=""{projectName}"" Height=""150"" Width=""450"" Topmost=""True"">
     <StackPanel Margin=""10"">
         <TextBlock x:Name=""txtModelName"" Text=""Connecting..."" Margin=""0,0,0,8""/>
-        <Button Content=""Insert Beam"" HorizontalAlignment=""Left""
+        <Button Content=""{(HasCustomMacro ? "Run Code" : "Insert Beam")}"" HorizontalAlignment=""Left""
                 Padding=""20,6"" Click=""BtnInsertBeam_Click"" x:Name=""btnInsertBeam""/>
         <TextBlock x:Name=""txtStatus"" Margin=""0,8,0,0""/>
     </StackPanel>
@@ -588,25 +844,7 @@ namespace {safeNamespace}
         {{
             try
             {{
-                var beam = new Beam();
-                beam.Name = ""BEAM"";
-                beam.Profile.ProfileString = ""HEA300"";
-                beam.Material.MaterialString = ""S235JR"";
-                beam.Class = ""1"";
-                beam.StartPoint = new Tekla.Structures.Geometry3d.Point(0, 0, 0);
-                beam.EndPoint = new Tekla.Structures.Geometry3d.Point(6000, 0, 0);
-
-                if (beam.Insert())
-                {{
-                    _model.CommitChanges();
-                    txtStatus.Foreground = Brushes.Green;
-                    txtStatus.Text = ""Beam inserted successfully."";
-                }}
-                else
-                {{
-                    txtStatus.Foreground = Brushes.Red;
-                    txtStatus.Text = ""Failed to insert beam."";
-                }}
+                {IndentCode(GetActionBody("WPF"), 16).TrimStart()}
             }}
             catch (Exception ex)
             {{
@@ -623,7 +861,7 @@ namespace {safeNamespace}
             File.WriteAllText(Path.Combine(projectPath, $"{className}.xaml.cs"), mainWindowXamlCs);
         }
 
-        public bool TryCreateProjectNonInteractive(string projectName, string appType, string teklaVersion, bool openProject, out string message)
+        public bool TryCreateProjectNonInteractive(string projectName, string appType, string teklaVersion, bool openProject, string? macroFilePath, out string message)
         {
             message = string.Empty;
 
@@ -646,6 +884,18 @@ namespace {safeNamespace}
             {
                 message = $"Unsupported version '{teklaVersion}'. Allowed values: 2023, 2024, 2025, 2026, 2027.";
                 return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(macroFilePath))
+            {
+                if (!TryLoadMacroFile(macroFilePath, out string macroError))
+                {
+                    message = macroError;
+                    return false;
+                }
+
+                _macroFilePath = macroFilePath;
+                txtMacroPath.Text = Path.GetFileName(macroFilePath);
             }
 
             UpdatePath();
@@ -691,6 +941,12 @@ namespace {safeNamespace}
                     {
                         GenerateWinFormsFiles(projectPath, safeNamespace, projectName);
                     }
+                }
+
+                if (HasCustomMacro)
+                {
+                    string openApiCodeCs = GenerateOpenApiCodeFile(safeNamespace);
+                    File.WriteAllText(Path.Combine(projectPath, "OpenApiCode.cs"), openApiCodeCs);
                 }
 
                 string successMessage = $"Project created successfully at: {projectPath}";

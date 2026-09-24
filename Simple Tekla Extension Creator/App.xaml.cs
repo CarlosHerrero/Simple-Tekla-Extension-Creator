@@ -29,7 +29,7 @@ namespace Simple_Tekla_Extension_Creator
             {
                 string help = "Usage:\n"
                     + "SimpleTeklaExtensionCreator.exe --version <2023|2024|2025|2026|2027> --ui <Console|WinForms|WPF>\n"
-                    + "SimpleTeklaExtensionCreator.exe --non-interactive --project <Name> [--version <...>] [--ui <...>] [--open]";
+                    + "SimpleTeklaExtensionCreator.exe --non-interactive --project <Name> [--version <...>] [--ui <...>] [--open] [--macro <path-to-cs-file>]";
 
                 if (options.NonInteractive)
                 {
@@ -60,7 +60,7 @@ namespace Simple_Tekla_Extension_Creator
 
                 MainWindow = new MainWindow(version, ui, interactive: false);
                 bool created = MainWindow is MainWindow window
-                    && window.TryCreateProjectNonInteractive(options.ProjectName, ui, version, options.OpenProject, out result);
+                    && window.TryCreateProjectNonInteractive(options.ProjectName, ui, version, options.OpenProject, options.MacroFilePath, out result);
 
                 if (created)
                 {
@@ -86,6 +86,7 @@ namespace Simple_Tekla_Extension_Creator
             string? version = null;
             string? ui = null;
             string? projectName = null;
+            string? macroFilePath = null;
             bool nonInteractive = false;
             bool openProject = false;
 
@@ -94,12 +95,12 @@ namespace Simple_Tekla_Extension_Creator
                 string arg = args[i];
                 if (arg.Equals("--help", StringComparison.OrdinalIgnoreCase) || arg.Equals("-h", StringComparison.OrdinalIgnoreCase) || arg.Equals("/?", StringComparison.OrdinalIgnoreCase))
                 {
-                    return new CliOptions(version, ui, projectName, nonInteractive, openProject, true, null);
+                    return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, true, null);
                 }
 
                 if (!arg.StartsWith("--", StringComparison.Ordinal))
                 {
-                    return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, $"Unexpected argument '{arg}'.");
+                    return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, $"Unexpected argument '{arg}'.");
                 }
 
                 string key;
@@ -124,7 +125,7 @@ namespace Simple_Tekla_Extension_Creator
                     {
                         if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
                         {
-                            return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, $"Missing value for '--{key}'.");
+                            return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, $"Missing value for '--{key}'.");
                         }
 
                         value = args[++i];
@@ -135,7 +136,7 @@ namespace Simple_Tekla_Extension_Creator
                 {
                     if (string.IsNullOrWhiteSpace(value))
                     {
-                        return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, "Missing value for '--version'.");
+                        return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, "Missing value for '--version'.");
                     }
 
                     version = value;
@@ -146,7 +147,7 @@ namespace Simple_Tekla_Extension_Creator
                 {
                     if (string.IsNullOrWhiteSpace(value))
                     {
-                        return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, "Missing value for '--ui'.");
+                        return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, "Missing value for '--ui'.");
                     }
 
                     ui = value;
@@ -159,10 +160,23 @@ namespace Simple_Tekla_Extension_Creator
                 {
                     if (string.IsNullOrWhiteSpace(value))
                     {
-                        return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, "Missing value for '--project'.");
+                        return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, "Missing value for '--project'.");
                     }
 
                     projectName = value;
+                    continue;
+                }
+
+                if (key.Equals("macro", StringComparison.OrdinalIgnoreCase)
+                    || key.Equals("macrofile", StringComparison.OrdinalIgnoreCase)
+                    || key.Equals("macropath", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, "Missing value for '--macro'.");
+                    }
+
+                    macroFilePath = value;
                     continue;
                 }
 
@@ -183,7 +197,7 @@ namespace Simple_Tekla_Extension_Creator
                         continue;
                     }
 
-                    return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, $"Invalid boolean value '{value}' for '--{key}'.");
+                    return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, $"Invalid boolean value '{value}' for '--{key}'.");
                 }
 
                 if (key.Equals("open", StringComparison.OrdinalIgnoreCase))
@@ -200,19 +214,20 @@ namespace Simple_Tekla_Extension_Creator
                         continue;
                     }
 
-                    return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, $"Invalid boolean value '{value}' for '--{key}'.");
+                    return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, $"Invalid boolean value '{value}' for '--{key}'.");
                 }
 
-                return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, $"Unknown option '--{key}'.");
+                return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, $"Unknown option '--{key}'.");
             }
 
-            return new CliOptions(version, ui, projectName, nonInteractive, openProject, false, null);
+            return new CliOptions(version, ui, projectName, macroFilePath, nonInteractive, openProject, false, null);
         }
 
         private sealed record CliOptions(
             string? Version,
             string? Ui,
             string? ProjectName,
+            string? MacroFilePath,
             bool NonInteractive,
             bool OpenProject,
             bool ShowHelp,

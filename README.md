@@ -1,5 +1,7 @@
 # Simple-Tekla-Extension-Creator
-Creates simple apps to test Tekla API - You can select app type (Console, WinForms, WPF) and TS version
+Creates simple apps to test Tekla API - You can select app type (Console, WinForms, WPF) and TS version.
+Generated projects always check the Tekla model name, and you can optionally replace the default
+example beam-insertion code with real Tekla Open API code extracted from an existing macro (`.cs`) file.
 
 ## Agent skill / CLI scaffolding
 
@@ -8,6 +10,12 @@ for you in Visual Studio, VS Code, or Cursor) without opening the app UI:
 
 ```powershell
 ./Simple Tekla Extension Creator/Copilot Skill/scripts/Create-SimpleTeklaExtension.ps1 -ProjectName MyTeklaTool -Version 2026 -UI WPF
+```
+
+To replace the default beam-insertion example with Tekla Open API code from an existing macro file:
+
+```powershell
+./Simple Tekla Extension Creator/Copilot Skill/scripts/Create-SimpleTeklaExtension.ps1 -ProjectName MyTeklaTool -Version 2026 -UI WPF -MacroFile "C:\ProgramData\Trimble\Tekla Structures\2026.0\Environments\common\macros\modeling\Swap Handles.cs"
 ```
 
 See [Simple Tekla Extension Creator/Copilot Skill/SKILL.md](Simple%20Tekla%20Extension%20Creator/Copilot%20Skill/SKILL.md)
