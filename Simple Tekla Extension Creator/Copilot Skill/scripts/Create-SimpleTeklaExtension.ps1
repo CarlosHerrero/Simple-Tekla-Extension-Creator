@@ -8,6 +8,8 @@ param(
 	[ValidateSet("Console", "WinForms", "WPF")]
 	[string]$UI = "Console",
 
+	[switch]$OpenProject = $true,
+
 	[string]$CreatorProjectPath
 )
 
@@ -31,6 +33,10 @@ $arguments = @(
 	"--version", $Version,
 	"--ui", $UI
 )
+
+if ($OpenProject) {
+	$arguments += "--open"
+}
 
 & dotnet @arguments
 exit $LASTEXITCODE

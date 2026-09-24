@@ -7,11 +7,107 @@ namespace Simple_Tekla_Extension_Creator
 {
     public partial class MainWindow : Window
     {
-        public MainWindow(string? startupTeklaVersion = null, string? startupUi = null)
+        private bool _bootstrapFailed;
+        private string _bootstrapError = string.Empty;
+
+        public MainWindow(string? startupTeklaVersion = null, string? startupUi = null, bool interactive = true)
         {
             InitializeComponent();
+
+            if (!EnsureAllBaseFoldersAndProps(out string bootstrapError))
+            {
+                _bootstrapFailed = true;
+                _bootstrapError = bootstrapError;
+
+                if (interactive)
+                {
+                    MessageBox.Show(bootstrapError, "Insufficient Permissions", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    DisableForBootstrapFailure(bootstrapError);
+                }
+            }
+
             ApplyStartupSelections(startupTeklaVersion, startupUi);
             UpdatePath();
+        }
+
+        private void DisableForBootstrapFailure(string error)
+        {
+            rootGrid.IsEnabled = false;
+            txtStatus.Foreground = System.Windows.Media.Brushes.OrangeRed;
+            txtStatus.Text = error;
+        }
+
+        /// <summary>
+        /// Every supported Tekla version, mapped to its base repos folder name.
+        /// </summary>
+        private static readonly (string Version, string Folder)[] AllTeklaVersionFolders =
+        [
+            ("2023", "2023"),
+            ("2024", "2024"),
+            ("2025", "2025"),
+            ("2026", "2026"),
+            ("2027 dailybuild", "2027 Daily"),
+        ];
+
+        /// <summary>
+        /// Ensures that the base repos folder for every supported Tekla version exists, and that each
+        /// (except 2023, which does not require one) has a Directory.Build.Props file.
+        /// </summary>
+        private static bool EnsureAllBaseFoldersAndProps(out string errorMessage)
+        {
+            errorMessage = string.Empty;
+            string userName = Environment.UserName;
+            string reposRoot = $@"C:\Users\{userName}\source\repos";
+
+            foreach ((string version, string folder) in AllTeklaVersionFolders)
+            {
+                string folderPath = Path.Combine(reposRoot, folder);
+
+                try
+                {
+                    Directory.CreateDirectory(folderPath);
+
+                    if (version != "2023")
+                    {
+                        string propsPath = Path.Combine(folderPath, "Directory.Build.Props");
+                        if (!File.Exists(propsPath))
+                        {
+                            File.WriteAllText(propsPath, GetDirectoryBuildPropsTemplate(version));
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+                {
+                    errorMessage = $"This application cannot be used because it lacks write access to '{folderPath}'. " +
+                        "Please try running the application in administrator mode.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string GetDirectoryBuildPropsTemplate(string teklaVersion)
+        {
+            string installationPath = teklaVersion == "2027 dailybuild"
+                ? @"C:\Program Files\Tekla Structures\2027.0 Daily\bin"
+                : $@"C:\Program Files\Tekla Structures\{teklaVersion}.0\bin";
+
+            string platformGroup = teklaVersion == "2027 dailybuild"
+                ? "\r\n\t<PropertyGroup>\r\n        <PlatformTarget>x64</PlatformTarget>\r\n        <Platforms>x64</Platforms>\r\n\t</PropertyGroup>\r\n"
+                : string.Empty;
+
+            return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n" +
+                "<Project ToolsVersion=\"14.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\" >\r\n" +
+                "\t<PropertyGroup>\r\n" +
+                "\t\t<!-- Force configuration to be debug in case none provided, happens if running from command line: example: dotnet build -->\r\n" +
+                "\t\t<Configuration Condition=\"'$(Configuration)' == ''\">Debug</Configuration>\r\n" +
+                $"\t\t<TeklaStructuresInstallationPath Condition=\"'$(Configuration)' == 'Debug'\">{installationPath}</TeklaStructuresInstallationPath>\r\n" +
+                "\t\t<!-- Or Tekla Version can be used instead -->\r\n" +
+                "\t\t<!--TeklaVersion Condition=\"'$(Configuration)' == 'Debug'\">2024.0</TeklaVersion-->\r\n" +
+                "\t</PropertyGroup>\r\n" +
+                platformGroup +
+                "</Project>\r\n";
         }
 
         private void ApplyStartupSelections(string? startupTeklaVersion, string? startupUi)
@@ -62,8 +158,8 @@ namespace Simple_Tekla_Extension_Creator
 
         private string GetReposBasePath()
         {
-            string computerName = Environment.MachineName;
-            string userName = computerName == "Z-CAHE3" ? "cahe" : Environment.UserName;
+            //string computerName = Environment.MachineName;
+            string userName = Environment.UserName;
             string teklaVersion = GetTeklaVersionFolder();
             string folder = teklaVersion == "2027 dailybuild" ? "2027 Daily" : teklaVersion;
             return Path.Combine($@"C:\Users\{userName}\source\repos", folder);
@@ -95,6 +191,15 @@ namespace Simple_Tekla_Extension_Creator
         private bool ValidateInputs(out string error)
         {
             error = string.Empty;
+
+            if (_bootstrapFailed)
+            {
+                error = _bootstrapError;
+                txtStatus.Text = error;
+                btnCreate.IsEnabled = false;
+                return false;
+            }
+
             string projectName = txtProjectName.Text.Trim();
 
             if (string.IsNullOrEmpty(projectName))
@@ -518,7 +623,7 @@ namespace {safeNamespace}
             File.WriteAllText(Path.Combine(projectPath, $"{className}.xaml.cs"), mainWindowXamlCs);
         }
 
-        public bool TryCreateProjectNonInteractive(string projectName, string appType, string teklaVersion, out string message)
+        public bool TryCreateProjectNonInteractive(string projectName, string appType, string teklaVersion, bool openProject, out string message)
         {
             message = string.Empty;
 
@@ -544,7 +649,7 @@ namespace {safeNamespace}
             }
 
             UpdatePath();
-            return TryCreateProject(openProjectInVisualStudio: false, showMessageBoxes: false, out message);
+            return TryCreateProject(openProjectInVisualStudio: openProject, showMessageBoxes: false, out message);
         }
 
         private bool TryCreateProject(bool openProjectInVisualStudio, bool showMessageBoxes, out string message)
@@ -595,7 +700,7 @@ namespace {safeNamespace}
                 if (openProjectInVisualStudio)
                 {
                     string csprojFile = Path.Combine(projectPath, $"{projectName}.csproj");
-                    OpenCreatedProject(csprojFile);
+                    OpenCreatedProject(projectPath, csprojFile);
                 }
 
                 message = successMessage;
@@ -616,23 +721,73 @@ namespace {safeNamespace}
             }
         }
 
-        private static void OpenCreatedProject(string csprojFile)
+        private static void OpenCreatedProject(string projectPath, string csprojFile)
         {
             string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            string[] candidatePaths =
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+            string[] devenvCandidates =
             [
                 Path.Combine(programFiles, @"Microsoft Visual Studio\Insiders\Common7\IDE\devenv.exe"),
                 Path.Combine(programFiles, @"Microsoft Visual Studio\2022\Preview\Common7\IDE\devenv.exe"),
             ];
 
-            string? devenvPath = candidatePaths.FirstOrDefault(File.Exists);
+            string? devenvPath = devenvCandidates.FirstOrDefault(File.Exists);
             if (devenvPath != null)
             {
                 Process.Start(devenvPath, $"\"{csprojFile}\"");
+                return;
             }
-            else
+
+            string[] vsCodeCandidates =
+            [
+                Path.Combine(localAppData, @"Programs\Microsoft VS Code\Code.exe"),
+                Path.Combine(programFiles, @"Microsoft VS Code\Code.exe"),
+            ];
+
+            string? vsCodePath = vsCodeCandidates.FirstOrDefault(File.Exists);
+            if (vsCodePath != null)
             {
-                Process.Start(new ProcessStartInfo(csprojFile) { UseShellExecute = true });
+                Process.Start(vsCodePath, $"\"{projectPath}\"");
+                return;
+            }
+
+            string[] cursorCandidates =
+            [
+                Path.Combine(localAppData, @"Programs\Cursor\Cursor.exe"),
+                Path.Combine(programFiles, @"Cursor\Cursor.exe"),
+            ];
+
+            string? cursorPath = cursorCandidates.FirstOrDefault(File.Exists);
+            if (cursorPath != null)
+            {
+                Process.Start(cursorPath, $"\"{projectPath}\"");
+                return;
+            }
+
+            if (TryStartOnPath("code", $"\"{projectPath}\""))
+            {
+                return;
+            }
+
+            if (TryStartOnPath("cursor", $"\"{projectPath}\""))
+            {
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo(csprojFile) { UseShellExecute = true });
+        }
+
+        private static bool TryStartOnPath(string fileName, string arguments)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(fileName, arguments) { UseShellExecute = true });
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 
