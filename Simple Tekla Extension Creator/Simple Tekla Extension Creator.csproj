@@ -18,4 +18,8 @@
     <Resource Include="app.png" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Simple Tekla Extension Creator.Core\Simple Tekla Extension Creator.Core.csproj" />
+  </ItemGroup>
+
 </Project>

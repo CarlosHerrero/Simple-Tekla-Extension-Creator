@@ -25,11 +25,22 @@ inside the macro's entry-point method (and any helper classes/methods it declare
 into a separate `OpenApiCode.cs` file in the generated project, exposed via a static
 `OpenApiCode.ExecuteTextCode()` method that the project calls instead of the beam example.
 
+### Installation
+The generator is distributed as a packable dotnet tool. Install it once, globally:
+
+```powershell
+dotnet tool install --global SimpleTeklaExtensionCreator
+```
+
+The script automatically prefers the installed `simple-tekla-extension-creator` command. If the
+tool isn't installed (or `-CreatorProjectPath` is passed explicitly), it falls back to
+`dotnet run --project` against `Simple Tekla Extension Creator.Tool.csproj`, resolving the path
+from `-CreatorProjectPath`, then the `SIMPLE_TEKLA_CREATOR_PATH` environment variable, then the
+script's own repo location.
+
 ### Prerequisites to run the skill
 - Windows (paths and Tekla Structures installation locations are Windows-specific)
 - .NET 10 SDK
 - PowerShell 7+ (`pwsh`)
-
-When invoking the script from a different repo/solution, either pass `-CreatorProjectPath`
-explicitly or rely on the `SIMPLE_TEKLA_CREATOR_PATH` environment variable (set once at the
-user level, pointing at `Simple Tekla Extension Creator.csproj` or its folder).
+- The `SimpleTeklaExtensionCreator` dotnet tool installed globally (or the repo source, for
+  local development via `dotnet run --project`)
